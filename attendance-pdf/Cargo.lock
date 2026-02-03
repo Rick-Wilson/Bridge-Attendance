@@ -1981,12 +1981,16 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "pbn-to-pdf"
+version = "0.10.2"
+
+[[patch.unused]]
 name = "bridge-parsers"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "pbn-to-pdf"
-version = "0.10.2"
+name = "bridge-encodings"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "bridge-types"
@@ -1995,7 +1999,3 @@ version = "0.1.0"
 [[patch.unused]]
 name = "bridge-solver"
 version = "0.4.0"
-
-[[patch.unused]]
-name = "bridge-encodings"
-version = "0.1.0"

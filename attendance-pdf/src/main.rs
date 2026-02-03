@@ -182,9 +182,16 @@ fn run() -> Result<(), AppError> {
     };
 
     // Determine output filename
-    let output_file = args
-        .output
-        .unwrap_or_else(|| format!("attendance-{}.pdf", config.date.format("%Y-%m-%d")));
+    let output_file = args.output.unwrap_or_else(|| {
+        let sanitized_name = config
+            .class_name
+            .to_lowercase()
+            .replace(' ', "-")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .collect::<String>();
+        format!("attendance-{}-{}.pdf", config.date.format("%Y-%m-%d"), sanitized_name)
+    });
 
     // Generate PDF
     generate_pdf(&config, &output_file)?;
