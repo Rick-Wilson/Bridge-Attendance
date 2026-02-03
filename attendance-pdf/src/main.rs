@@ -2,12 +2,12 @@
 
 use chrono::{Local, NaiveDate};
 use clap::Parser;
-use ::image::{DynamicImage, Luma};
+use ::image::{DynamicImage, Luma, Rgba, RgbImage};
 use printpdf::*;
 use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Read};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -56,6 +56,8 @@ pub enum AppError {
     QrError(String),
     #[error("Invalid date format: {0}")]
     DateError(String),
+    #[error("Failed to load logo: {0}")]
+    LogoError(String),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -103,6 +105,10 @@ struct Args {
     /// Student roster file (JSON array of names, optional)
     #[arg(long)]
     roster: Option<String>,
+
+    /// Logo image (file path or URL) to display in header top-right
+    #[arg(long)]
+    logo: Option<String>,
 }
 
 /// Roster entry from JSON file
@@ -132,6 +138,7 @@ struct AttendanceConfig {
     blank_rows: u32,
     mailing_list: bool,
     mailing_rows: u32,
+    logo: Option<DynamicImage>,
 }
 
 // ============================================================================
@@ -157,6 +164,9 @@ fn run() -> Result<(), AppError> {
     // Load roster if provided
     let roster = load_roster(&args.roster)?;
 
+    // Load logo if provided
+    let logo = load_logo(&args.logo)?;
+
     // Create config
     let config = AttendanceConfig {
         class_name: args.name,
@@ -168,6 +178,7 @@ fn run() -> Result<(), AppError> {
         blank_rows: args.rows,
         mailing_list: !args.no_mailing_list,
         mailing_rows: args.mailing_rows,
+        logo,
     };
 
     // Determine output filename
@@ -216,6 +227,35 @@ fn load_roster(path: &Option<String>) -> Result<Option<Vec<String>>, AppError> {
             let entries: Vec<RosterEntry> = serde_json::from_str(&content)
                 .map_err(|e| AppError::RosterError(format!("Invalid JSON: {}", e)))?;
             Ok(Some(entries.into_iter().map(|e| e.name).collect()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn load_logo(path: &Option<String>) -> Result<Option<DynamicImage>, AppError> {
+    match path {
+        Some(p) => {
+            let image_bytes = if p.starts_with("http://") || p.starts_with("https://") {
+                // Load from URL
+                let response = ureq::get(p)
+                    .call()
+                    .map_err(|e| AppError::LogoError(format!("Failed to fetch URL: {}", e)))?;
+
+                let mut bytes = Vec::new();
+                response.into_reader()
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| AppError::LogoError(format!("Failed to read response: {}", e)))?;
+                bytes
+            } else {
+                // Load from file
+                std::fs::read(p)
+                    .map_err(|e| AppError::LogoError(format!("{}: {}", p, e)))?
+            };
+
+            let img = ::image::load_from_memory(&image_bytes)
+                .map_err(|e| AppError::LogoError(format!("Failed to decode image: {}", e)))?;
+
+            Ok(Some(img))
         }
         None => Ok(None),
     }
@@ -446,14 +486,30 @@ fn draw_header_section(
         );
     }
 
-    // Event ID (right-aligned in header area)
+    // Logo in top-right (if provided)
+    let logo_max_width = 50.0;
+    let logo_max_height = QR_SIZE_MM;
+    let right_edge = MARGIN_MM + content_width;
+
+    if let Some(ref logo) = config.logo {
+        embed_logo(
+            layer,
+            logo,
+            logo_max_width,
+            logo_max_height,
+            right_edge,
+            y_pos,
+        )?;
+    }
+
+    // Event ID (right-aligned, below logo area)
     let event_id_text = format!("ID: {}", config.event_id);
     let right_x = MARGIN_MM + content_width - 25.0;
     layer.use_text(
         &event_id_text,
         SMALL_FONT_SIZE,
         Mm(right_x),
-        Mm(y_pos - 6.0),
+        Mm(y_pos - QR_SIZE_MM - 2.0),
         font_regular,
     );
 
@@ -491,6 +547,76 @@ fn embed_qr_code(
     // QR_SIZE_MM is the desired size, image dimensions are in pixels
     // DPI = pixels / (mm / 25.4)
     let dpi = (width as f32) / (QR_SIZE_MM / 25.4);
+
+    image.add_to_layer(
+        layer.clone(),
+        ImageTransform {
+            translate_x: Some(Mm(x)),
+            translate_y: Some(Mm(y)),
+            dpi: Some(dpi),
+            ..Default::default()
+        },
+    );
+
+    Ok(())
+}
+
+fn embed_logo(
+    layer: &PdfLayerReference,
+    logo_image: &DynamicImage,
+    max_width_mm: f32,
+    max_height_mm: f32,
+    right_edge_x: f32,
+    top_y: f32,
+) -> Result<(), AppError> {
+    // Convert to RGBA first to handle transparency
+    let rgba_image = logo_image.to_rgba8();
+    let (width_px, height_px) = rgba_image.dimensions();
+
+    // Composite against white background
+    let mut rgb_image = RgbImage::new(width_px, height_px);
+    for (x, y, pixel) in rgba_image.enumerate_pixels() {
+        let Rgba([r, g, b, a]) = *pixel;
+        let alpha = a as f32 / 255.0;
+        let bg = 255.0; // White background
+        let out_r = (r as f32 * alpha + bg * (1.0 - alpha)) as u8;
+        let out_g = (g as f32 * alpha + bg * (1.0 - alpha)) as u8;
+        let out_b = (b as f32 * alpha + bg * (1.0 - alpha)) as u8;
+        rgb_image.put_pixel(x, y, ::image::Rgb([out_r, out_g, out_b]));
+    }
+
+    // Calculate dimensions preserving aspect ratio
+    let aspect_ratio = width_px as f32 / height_px as f32;
+    let (final_width_mm, final_height_mm) = if max_width_mm / max_height_mm > aspect_ratio {
+        // Height-constrained
+        (max_height_mm * aspect_ratio, max_height_mm)
+    } else {
+        // Width-constrained
+        (max_width_mm, max_width_mm / aspect_ratio)
+    };
+
+    // Calculate position (right-aligned, top-aligned)
+    let x = right_edge_x - final_width_mm;
+    let y = top_y - final_height_mm;
+
+    // Convert to raw RGB bytes
+    let raw_pixels = rgb_image.into_raw();
+
+    // Create image for printpdf
+    let image = Image::from(ImageXObject {
+        width: Px(width_px as usize),
+        height: Px(height_px as usize),
+        color_space: ColorSpace::Rgb,
+        bits_per_component: ColorBits::Bit8,
+        interpolate: true,
+        image_data: raw_pixels,
+        image_filter: None,
+        clipping_bbox: None,
+        smask: None,
+    });
+
+    // Calculate DPI to achieve desired physical size
+    let dpi = (width_px as f32) / (final_width_mm / 25.4);
 
     image.add_to_layer(
         layer.clone(),
