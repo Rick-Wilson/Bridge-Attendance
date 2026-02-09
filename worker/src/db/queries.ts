@@ -4,6 +4,7 @@ import type {
   AttendanceRow,
   AttendanceWithStudent,
   MailingListRow,
+  MemberRow,
   TablePhotoRow,
   OcrJobRow,
 } from '../types';
@@ -341,4 +342,79 @@ export async function updateOcrJobFailed(
     )
     .bind(errorMessage, id)
     .run();
+}
+
+// ============================================================================
+// Members (groups.io roster)
+// ============================================================================
+
+export async function insertMember(
+  db: D1Database,
+  member: { name: string; email: string; joined_date?: string; declined?: boolean },
+): Promise<MemberRow> {
+  const id = generateId();
+  await db
+    .prepare('INSERT INTO members (id, name, email, joined_date, declined) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, member.name, member.email, member.joined_date ?? null, member.declined ? 1 : 0)
+    .run();
+  return db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first<MemberRow>() as Promise<MemberRow>;
+}
+
+export async function listMembers(
+  db: D1Database,
+  limit: number,
+  offset: number,
+  search?: string,
+): Promise<{ members: MemberRow[]; total: number }> {
+  const where = search ? "WHERE name LIKE '%' || ? || '%' OR email LIKE '%' || ? || '%'" : '';
+  const binds = search ? [search, search] : [];
+
+  const countResult = await db
+    .prepare(`SELECT COUNT(*) as total FROM members ${where}`)
+    .bind(...binds)
+    .first<{ total: number }>();
+  const total = countResult?.total ?? 0;
+
+  const { results } = await db
+    .prepare(`SELECT * FROM members ${where} ORDER BY name LIMIT ? OFFSET ?`)
+    .bind(...binds, limit, offset)
+    .all<MemberRow>();
+
+  return { members: results, total };
+}
+
+export async function getMemberByEmail(db: D1Database, email: string): Promise<MemberRow | null> {
+  return db.prepare('SELECT * FROM members WHERE email = ?').bind(email).first<MemberRow>();
+}
+
+export async function getMemberById(db: D1Database, id: string): Promise<MemberRow | null> {
+  return db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first<MemberRow>();
+}
+
+export async function updateMemberDeclined(db: D1Database, id: string, declined: boolean): Promise<void> {
+  await db.prepare('UPDATE members SET declined = ? WHERE id = ?').bind(declined ? 1 : 0, id).run();
+}
+
+export async function deleteMember(db: D1Database, id: string): Promise<boolean> {
+  const result = await db.prepare('DELETE FROM members WHERE id = ?').bind(id).run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** Check which students from a list are NOT in the members table */
+export async function findNonMembers(
+  db: D1Database,
+  studentIds: string[],
+): Promise<Array<{ student_id: string; student_name: string }>> {
+  if (studentIds.length === 0) return [];
+  const placeholders = studentIds.map(() => '?').join(',');
+  const { results } = await db
+    .prepare(
+      `SELECT s.id as student_id, s.name as student_name
+       FROM students s
+       LEFT JOIN members m ON LOWER(s.name) = LOWER(m.name)
+       WHERE s.id IN (${placeholders}) AND m.id IS NULL`,
+    )
+    .bind(...studentIds)
+    .all<{ student_id: string; student_name: string }>();
+  return results;
 }

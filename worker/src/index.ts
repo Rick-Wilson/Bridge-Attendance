@@ -12,6 +12,7 @@ import photos from './api/photos';
 import scan from './api/scan';
 import ocr from './api/ocr';
 import confirm from './api/confirm';
+import members from './api/members';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -21,7 +22,7 @@ app.use(
   '*',
   cors({
     origin: ['https://attendance.harmonicsystems.com', 'http://localhost:8787'],
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowHeaders: ['Authorization', 'Content-Type', 'X-API-Key'],
   }),
 );
@@ -49,6 +50,7 @@ app.route('/api/events', ocr); // OCR job routes nest under /api/events/:id/ocr
 app.route('/api/events', confirm); // confirm routes nest under /api/events/:id/confirm
 app.route('/api/students', students);
 app.route('/api/mailing-list', mailingList);
+app.route('/api/members', members);
 
 // Serve photos from R2 (authenticated)
 app.get('/photos/*', async (c) => {

@@ -66,6 +66,15 @@ export interface OcrJobRow {
   processed_at: string | null;
 }
 
+export interface MemberRow {
+  id: string;
+  name: string;
+  email: string;
+  joined_date: string | null;
+  declined: number;
+  created_at: string;
+}
+
 // API request bodies
 
 export interface CreateEventBody {
