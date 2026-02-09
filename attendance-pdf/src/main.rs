@@ -26,7 +26,7 @@ const MARGIN_MM: f32 = 15.0;
 const QR_SIZE_MM: f32 = 30.0;
 
 /// Maximum row height for roster mode
-const MAX_ROW_HEIGHT_MM: f32 = 7.0;
+const MAX_ROW_HEIGHT_MM: f32 = 9.0;
 
 /// Row height for blank table/seat mode (larger for writing)
 const TABLE_SEAT_ROW_HEIGHT_MM: f32 = 12.0;
@@ -34,8 +34,8 @@ const TABLE_SEAT_ROW_HEIGHT_MM: f32 = 12.0;
 /// Font sizes in points
 const TITLE_FONT_SIZE: f32 = 18.0;
 const HEADER_FONT_SIZE: f32 = 12.0;
-const NORMAL_FONT_SIZE: f32 = 10.0;
-const SMALL_FONT_SIZE: f32 = 8.0;
+const NORMAL_FONT_SIZE: f32 = 11.0;
+const SMALL_FONT_SIZE: f32 = 9.0;
 
 /// Column widths (proportional)
 const NAME_COL_RATIO: f32 = 0.60;
@@ -401,6 +401,9 @@ fn generate_pdf(config: &AttendanceConfig, output_path: &str) -> Result<(), AppE
 
     // Draw mailing list section if enabled (always on first page)
     if config.mailing_list {
+        let has_starred = config.roster.as_ref()
+            .map(|r| r.iter().any(|name| name.contains('*')))
+            .unwrap_or(false);
         let first_layer = doc.get_page(page1).get_layer(layer1);
         draw_mailing_section(
             &first_layer,
@@ -409,6 +412,7 @@ fn generate_pdf(config: &AttendanceConfig, output_path: &str) -> Result<(), AppE
             config.mailing_rows,
             MARGIN_MM,
             content_width,
+            has_starred,
         )?;
     }
 
@@ -651,94 +655,140 @@ fn draw_attendance_grid(
     content_width: f32,
     available_height: f32,
 ) -> Result<f32, AppError> {
-    let x_start = MARGIN_MM;
-    let mut y_pos = start_y;
-
-    // Calculate number of rows and available space
-    let header_row_height = 6.0;
-    let (total_rows, available_for_data) = match &config.roster {
-        Some(roster) => {
-            // Roster mode: has header row
-            let rows = roster.len() as u32 + 8; // Roster names + 8 blank rows
-            (rows, available_height - header_row_height)
-        }
-        None => {
-            // Blank mode: no header row, use full space
-            (config.blank_rows, available_height)
-        }
-    };
-    let row_height = (available_for_data / total_rows as f32).min(MAX_ROW_HEIGHT_MM);
-
-    // Column positions
-    let name_width = content_width * NAME_COL_RATIO;
-    let table_width = content_width * TABLE_COL_RATIO;
-    let seat_width = content_width * SEAT_COL_RATIO;
-
-    let col_name_x = x_start;
-    let col_table_x = x_start + name_width;
-    let col_seat_x = col_table_x + table_width;
-
-    // Draw data rows
     match &config.roster {
         Some(roster) => {
-            // Draw header row for roster mode
-            draw_grid_header(
-                layer,
-                font_bold,
-                y_pos,
-                col_name_x,
-                col_table_x,
-                col_seat_x,
-                name_width,
-                table_width,
-                seat_width,
-                header_row_height,
-            );
-            y_pos -= header_row_height;
+            // Two-column roster layout
+            let col_gap = 6.0; // Gap between columns
+            let col_width = (content_width - col_gap) / 2.0;
+            let header_row_height = 6.0;
+            let blank_rows = 4; // Blank rows per column for walk-ins
 
-            // Draw roster names with checkboxes
-            for name in roster.iter() {
-                draw_roster_row(
-                    layer,
-                    font_regular,
-                    y_pos,
-                    col_name_x,
-                    col_table_x,
-                    col_seat_x,
-                    name_width,
-                    table_width,
-                    seat_width,
-                    row_height,
-                    name,
-                );
-                y_pos -= row_height;
-            }
-            // Add 8 blank rows
-            for i in 0..8 {
-                draw_blank_row(
-                    layer,
-                    font_regular,
-                    y_pos,
-                    col_name_x,
-                    col_table_x,
-                    col_seat_x,
-                    name_width,
-                    table_width,
-                    seat_width,
-                    row_height,
-                    roster.len() as u32 + i + 1,
-                    false, // No number prefix for extra rows
-                );
-                y_pos -= row_height;
-            }
+            // Split roster into two columns
+            let total_roster = roster.len();
+            let left_count = (total_roster + 1) / 2; // Left gets the extra one if odd
+            let right_count = total_roster - left_count;
+
+            // Total rows per column = roster names + blank rows
+            let left_total = left_count as u32 + blank_rows;
+            let right_total = right_count as u32 + blank_rows;
+            let max_rows = left_total.max(right_total);
+
+            let available_for_data = available_height - header_row_height;
+            let row_height = (available_for_data / max_rows as f32).min(MAX_ROW_HEIGHT_MM);
+
+            // Draw left column
+            let left_x = MARGIN_MM;
+            draw_roster_column(
+                layer,
+                font_regular,
+                font_bold,
+                &roster[..left_count],
+                left_x,
+                col_width,
+                start_y,
+                row_height,
+                header_row_height,
+                blank_rows,
+            );
+
+            // Draw right column
+            let right_x = MARGIN_MM + col_width + col_gap;
+            draw_roster_column(
+                layer,
+                font_regular,
+                font_bold,
+                &roster[left_count..],
+                right_x,
+                col_width,
+                start_y,
+                row_height,
+                header_row_height,
+                blank_rows,
+            );
+
+            let rows_drawn = max_rows as f32 + 1.0; // +1 for header
+            Ok(start_y - header_row_height - rows_drawn * row_height)
         }
         None => {
             // Blank mode is now handled directly in generate_pdf for multi-page support
             unreachable!("Blank mode should be handled in generate_pdf");
         }
     }
+}
 
-    Ok(y_pos)
+fn draw_roster_column(
+    layer: &PdfLayerReference,
+    font_regular: &IndirectFontRef,
+    font_bold: &IndirectFontRef,
+    names: &[String],
+    x_start: f32,
+    col_width: f32,
+    start_y: f32,
+    row_height: f32,
+    header_row_height: f32,
+    blank_rows: u32,
+) {
+    let name_width = col_width * NAME_COL_RATIO;
+    let table_width = col_width * TABLE_COL_RATIO;
+    let seat_width = col_width * SEAT_COL_RATIO;
+
+    let col_name_x = x_start;
+    let col_table_x = x_start + name_width;
+    let col_seat_x = col_table_x + table_width;
+
+    let mut y_pos = start_y;
+
+    // Draw header
+    draw_grid_header(
+        layer,
+        font_bold,
+        y_pos,
+        col_name_x,
+        col_table_x,
+        col_seat_x,
+        name_width,
+        table_width,
+        seat_width,
+        header_row_height,
+    );
+    y_pos -= header_row_height;
+
+    // Draw roster names
+    for name in names.iter() {
+        draw_roster_row(
+            layer,
+            font_regular,
+            y_pos,
+            col_name_x,
+            col_table_x,
+            col_seat_x,
+            name_width,
+            table_width,
+            seat_width,
+            row_height,
+            name,
+        );
+        y_pos -= row_height;
+    }
+
+    // Draw blank rows for walk-ins
+    for i in 0..blank_rows {
+        draw_blank_row(
+            layer,
+            font_regular,
+            y_pos,
+            col_name_x,
+            col_table_x,
+            col_seat_x,
+            name_width,
+            table_width,
+            seat_width,
+            row_height,
+            names.len() as u32 + i + 1,
+            false,
+        );
+        y_pos -= row_height;
+    }
 }
 
 fn draw_grid_header(
@@ -753,7 +803,7 @@ fn draw_grid_header(
     seat_width: f32,
     row_height: f32,
 ) {
-    let text_y = y - row_height + 1.5;
+    let text_y = y - row_height / 2.0 - 1.5;
 
     // Column headers
     layer.use_text("NAME", NORMAL_FONT_SIZE, Mm(col_name_x + 2.0), Mm(text_y), font_bold);
@@ -782,7 +832,7 @@ fn draw_roster_row(
     row_height: f32,
     name: &str,
 ) {
-    let text_y = y - row_height + 1.5;
+    let text_y = y - row_height / 2.0 - 1.5;
     let checkbox_size = 3.0;
 
     // Draw checkbox
@@ -798,10 +848,10 @@ fn draw_roster_row(
     );
 
     // Draw table column line
-    draw_line(layer, col_table_x + 5.0, text_y - 0.5, col_table_x + table_width - 3.0, text_y - 0.5);
+    draw_line(layer, col_table_x + 2.0, text_y - 0.5, col_table_x + table_width - 1.0, text_y - 0.5);
 
     // Draw seat options
-    layer.use_text("N  S  E  W", SMALL_FONT_SIZE, Mm(col_seat_x + 3.0), Mm(text_y), font_regular);
+    layer.use_text("N  S  E  W", NORMAL_FONT_SIZE, Mm(col_seat_x + 1.0), Mm(text_y), font_regular);
 
     // Draw row bottom line
     let line_color = Color::Rgb(Rgb::new(0.8, 0.8, 0.8, None));
@@ -815,16 +865,16 @@ fn draw_blank_row(
     font_regular: &IndirectFontRef,
     y: f32,
     col_name_x: f32,
-    col_table_x: f32,
+    _col_table_x: f32,
     col_seat_x: f32,
     _name_width: f32,
-    table_width: f32,
+    _table_width: f32,
     seat_width: f32,
     row_height: f32,
     row_num: u32,
     show_number: bool,
 ) {
-    let text_y = y - row_height + 1.5;
+    let text_y = y - row_height / 2.0 - 1.5;
 
     // Row number or empty
     if show_number {
@@ -837,15 +887,8 @@ fn draw_blank_row(
         );
     }
 
-    // Name line
-    let name_line_start = col_name_x + if show_number { 8.0 } else { 2.0 };
-    draw_line(layer, name_line_start, text_y - 0.5, col_table_x - 2.0, text_y - 0.5);
-
-    // Table column line
-    draw_line(layer, col_table_x + 5.0, text_y - 0.5, col_table_x + table_width - 3.0, text_y - 0.5);
-
     // Seat options
-    layer.use_text("N  S  E  W", SMALL_FONT_SIZE, Mm(col_seat_x + 3.0), Mm(text_y), font_regular);
+    layer.use_text("N  S  E  W", NORMAL_FONT_SIZE, Mm(col_seat_x + 1.0), Mm(text_y), font_regular);
 
     // Row bottom line
     let line_color = Color::Rgb(Rgb::new(0.8, 0.8, 0.8, None));
@@ -929,6 +972,7 @@ fn draw_mailing_section(
     rows: u32,
     x_start: f32,
     content_width: f32,
+    has_starred: bool,
 ) -> Result<(), AppError> {
     let section_height = calculate_mailing_section_height(rows);
     let y_bottom = MARGIN_MM;
@@ -944,8 +988,13 @@ fn draw_mailing_section(
 
     // Section header
     let header_y = y_top - 6.0;
+    let header_text = if has_starred {
+        "* JOIN MY MAILING LIST"
+    } else {
+        "JOIN MY MAILING LIST"
+    };
     layer.use_text(
-        "JOIN MY MAILING LIST",
+        header_text,
         NORMAL_FONT_SIZE,
         Mm(x_start + content_width / 2.0 - 20.0),
         Mm(header_y),
