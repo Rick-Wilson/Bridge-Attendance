@@ -1,0 +1,27 @@
+name = "bridge-attendance"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Custom domain
+# routes = [
+#   { pattern = "attendance.harmonicsystems.com/*", zone_name = "harmonicsystems.com" }
+# ]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "bridge-attendance"
+database_id = "local-dev-placeholder"  # Replace with real ID after: npx wrangler d1 create bridge-attendance
+migrations_dir = "migrations"
+
+# R2 Bucket
+[[r2_buckets]]
+binding = "PHOTOS"
+bucket_name = "bridge-attendance-photos"
+
+# Environment variables (secrets set via `wrangler secret put`)
+# API_KEY - shared secret for authentication
+# ANTHROPIC_API_KEY - for Phase 3 OCR (not needed yet)
+
+[vars]
+ENVIRONMENT = "development"
