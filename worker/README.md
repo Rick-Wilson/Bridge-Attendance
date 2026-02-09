@@ -15,7 +15,8 @@ Cloudflare Worker backend for the Bridge Class Attendance system. Provides a RES
 - Photo upload to R2 (attendance sheets and table photos)
 - OCR processing with Claude Vision API (scan, review, confirm workflow)
 - API key authentication
-- D1 schema with 6 tables, CHECK constraints, indexes, and cascading deletes
+- Members roster (imported from groups.io, with declined flag and non-member detection)
+- D1 schema with 7 tables, CHECK constraints, indexes, and cascading deletes
 
 ### What's not yet implemented
 
@@ -159,6 +160,22 @@ Students are auto-created by name if they don't exist yet.
 | `GET` | `/api/mailing-list` | List all. Query: `?format=csv` for CSV export |
 | `DELETE` | `/api/mailing-list/:id` | Remove entry |
 
+### Members (groups.io roster)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/members` | List members. Query: `?search=alice&limit=50&offset=0` |
+| `POST` | `/api/members` | Add member. Body: `{name, email, joined_date?, declined?}` |
+| `POST` | `/api/members/batch` | Batch import. Body: `{members: [{name, email, joined_date?}]}` |
+| `PATCH` | `/api/members/:id` | Update declined flag. Body: `{declined: true}` |
+| `DELETE` | `/api/members/:id` | Remove member |
+| `GET` | `/api/members/non-members/:eventId` | Find attendees not on the mailing list |
+
+Import from groups.io CSV export:
+```bash
+./scripts/import-members-csv.sh path/to/SCBridge@groups.io.csv
+```
+
 ### Photos
 
 | Method | Path | Description |
@@ -197,8 +214,12 @@ worker/
 ├── tsconfig.json
 ├── wrangler.toml
 ├── .dev.vars              # Local secrets (not in git)
+├── scripts/
+│   ├── import-ocr-json.sh    # Import OCR results JSON
+│   └── import-members-csv.sh # Import groups.io CSV
 ├── migrations/
-│   └── 0001_initial_schema.sql
+│   ├── 0001_initial_schema.sql
+│   └── 0002_members_table.sql
 └── src/
     ├── index.ts           # Hono app entry point
     ├── types.ts           # TypeScript interfaces
@@ -213,7 +234,8 @@ worker/
     │   ├── photos.ts      # R2 upload
     │   ├── scan.ts        # Photo upload + OCR
     │   ├── ocr.ts         # OCR job listing
-    │   └── confirm.ts     # Commit OCR results
+    │   ├── confirm.ts     # Commit OCR results
+    │   └── members.ts     # Members roster CRUD
     ├── ocr/
     │   └── claude-vision.ts  # Claude Vision API integration
     ├── db/
