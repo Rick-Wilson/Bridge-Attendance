@@ -418,3 +418,43 @@ export async function findNonMembers(
     .all<{ student_id: string; student_name: string }>();
   return results;
 }
+
+/** Get all unique students who attended any event with the same class name, with mailing list status */
+export async function getRosterForClass(
+  db: D1Database,
+  className: string,
+): Promise<
+  Array<{
+    student_id: string;
+    student_name: string;
+    is_member: number;
+    declined: number;
+    events_attended: number;
+  }>
+> {
+  const { results } = await db
+    .prepare(
+      `SELECT
+         s.id as student_id,
+         s.name as student_name,
+         CASE WHEN m.id IS NOT NULL THEN 1 ELSE 0 END as is_member,
+         COALESCE(m.declined, 0) as declined,
+         COUNT(DISTINCT a.event_id) as events_attended
+       FROM students s
+       JOIN attendance a ON s.id = a.student_id
+       JOIN events e ON a.event_id = e.id
+       LEFT JOIN members m ON LOWER(s.name) = LOWER(m.name)
+       WHERE e.name = ?
+       GROUP BY s.id
+       ORDER BY s.name`,
+    )
+    .bind(className)
+    .all();
+  return results as Array<{
+    student_id: string;
+    student_name: string;
+    is_member: number;
+    declined: number;
+    events_attended: number;
+  }>;
+}

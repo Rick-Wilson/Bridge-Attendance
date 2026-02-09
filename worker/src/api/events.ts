@@ -56,4 +56,32 @@ app.get('/:id', async (c) => {
   });
 });
 
+// GET /api/events/:id/roster - Get roster for this class (all students who've ever attended)
+app.get('/:id/roster', async (c) => {
+  const id = c.req.param('id');
+  const event = await db.getEventById(c.env.DB, id);
+  if (!event) throw notFound('Event', id);
+
+  const roster = await db.getRosterForClass(c.env.DB, event.name);
+
+  const students = roster.map((r) => ({
+    student_id: r.student_id,
+    name: r.student_name,
+    is_member: r.is_member === 1,
+    declined: r.declined === 1,
+    needs_mailing_list: r.is_member === 0 && r.declined === 0,
+    events_attended: r.events_attended,
+  }));
+
+  return c.json({
+    data: {
+      class_name: event.name,
+      teacher: event.teacher,
+      total_students: students.length,
+      needs_mailing_list: students.filter((s) => s.needs_mailing_list).length,
+      students,
+    },
+  });
+});
+
 export default app;
