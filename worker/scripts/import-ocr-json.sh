@@ -73,8 +73,8 @@ for entry in cls['attendance']:
     attendance.append(record)
 
 mailing_list = []
-for entry in cls.get('mailing_list', []):
-    if entry.get('name') and entry.get('email'):
+for entry in cls.get('mailing_list_signups', cls.get('mailing_list', [])):
+    if entry.get('name') and entry.get('email') and entry['name'] != 'illegible' and entry['email'] != 'illegible':
         mailing_list.append({
             'name': entry['name'],
             'email': entry['email']
